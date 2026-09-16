@@ -1,0 +1,25 @@
+# Documentation & Markdown files
+5_TraceSleuth_Failure_Forensics_AI_Pipelines.md
+*.md
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Common dependencies & build outputs
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
