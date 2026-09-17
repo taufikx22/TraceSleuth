@@ -1,25 +1,48 @@
-# Documentation & Markdown files
+# Specification & documentation ignores
 5_TraceSleuth_Failure_Forensics_AI_Pipelines.md
 *.md
+!README.md
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python caches & build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # Environment variables & secrets
 .env
 .env.*
 !.env.example
 
+# Local databases & runtime traces
+*.db
+*.sqlite
+*.sqlite3
+fixtures/traces/*.json
+!fixtures/traces/.gitkeep
+
 # Operating System files
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # IDE & Editor files
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Common dependencies & build outputs
-node_modules/
-dist/
-build/
-__pycache__/
-*.pyc
