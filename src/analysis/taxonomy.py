@@ -91,20 +91,6 @@ class FailureTaxonomyClassifier:
                         strength=0.9,
                     )
                 )
-            elif isinstance(candidate_count, (int, float)) and 0 < candidate_count <= 1:
-                if not first_span_id:
-                    first_span_id = span.span_id
-                score = max(score, 0.6)
-                evidence_list.append(
-                    Evidence(
-                        span_id=span.span_id,
-                        type="retrieval_sparse",
-                        key="retrieval.candidate_count",
-                        value_hash=str(candidate_count),
-                        description=f"Very few retrieval candidates ({candidate_count})",
-                        strength=0.6,
-                    )
-                )
 
         if not evidence_list:
             return None

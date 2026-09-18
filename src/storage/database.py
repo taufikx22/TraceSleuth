@@ -58,8 +58,17 @@ class DatabaseManager:
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def init_db(self) -> None:
-        """Create all tables defined in the ORM models."""
+        """Create all tables defined in the ORM models and migrate columns if needed."""
         Base.metadata.create_all(bind=self.engine)
+        if "sqlite" in self.database_url:
+            with self.engine.begin() as conn:
+                try:
+                    res = conn.exec_driver_sql("PRAGMA table_info(incidents)").fetchall()
+                    cols = [row[1] for row in res]
+                    if cols and "failure_signature" not in cols:
+                        conn.exec_driver_sql("ALTER TABLE incidents ADD COLUMN failure_signature VARCHAR(64)")
+                except Exception:
+                    pass
 
     def drop_db(self) -> None:
         """Drop all tables — use for testing only."""

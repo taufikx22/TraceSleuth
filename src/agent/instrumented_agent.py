@@ -81,6 +81,7 @@ class InstrumentedResearchAgent:
             "tracesleuth.model_config_version": self.model_config_version,
             "tracesleuth.prompt_version": self.prompt_version,
             "tracesleuth.environment": self.environment,
+            "agent.query": request.query,
             "agent.query_hash": hash_content(request.query),
             "agent.failure_mode": failure_mode.value,
         }
@@ -276,4 +277,7 @@ class InstrumentedResearchAgent:
 
         # Retrieve assembled trace from OpenTelemetry collector
         trace_data = self.telemetry.get_trace(trace_id_hex)
+        if trace_data:
+            trace_data.metadata["query"] = request.query
+            trace_data.metadata["failure_mode"] = failure_mode.value
         return resp, trace_data

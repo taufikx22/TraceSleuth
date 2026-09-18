@@ -28,7 +28,31 @@ from src.domain.trace import (
     TraceEvent,
     TraceOutcome,
 )
-from src.storage.models import EvidenceRecord, IncidentRecord, SpanRecord, TraceRecord
+from src.storage.models import (
+    EvidenceRecord,
+    IncidentRecord,
+    RegressionCaseRecord,
+    RegressionRunRecord,
+    ReplayRecord,
+    SpanRecord,
+    TraceRecord,
+)
+from src.domain.regression import (
+    AssertionOperator,
+    AssertionResult,
+    RegressionAssertion,
+    RegressionCase,
+    RegressionRunResult,
+    RegressionStatus,
+)
+from src.replay.types import (
+    ReplayConfig,
+    ReplayMetricsDiff,
+    ReplayRun,
+    ReplayType,
+    ReplayVerdict,
+)
+from src.analysis.similarity import FailureSignature, compute_incident_similarity
 
 
 def _ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
@@ -251,6 +275,8 @@ class TraceRepository:
 
     def save_incident(self, incident: Incident) -> None:
         """Persist an incident and its evidence."""
+        sig = FailureSignature.generate(incident).signature_str
+
         existing = (
             self.session.query(IncidentRecord)
             .filter(IncidentRecord.incident_id == incident.incident_id)
@@ -264,6 +290,7 @@ class TraceRepository:
             existing.first_suspicious_span_id = incident.first_suspicious_span_id
             existing.hypothesis_score = incident.hypothesis_score
             existing.status = incident.status.value
+            existing.failure_signature = sig
             existing.resolved_at = incident.resolved_at
             existing.metadata_json = json.dumps(incident.metadata)
 
@@ -281,6 +308,7 @@ class TraceRepository:
                 first_suspicious_span_id=incident.first_suspicious_span_id,
                 hypothesis_score=incident.hypothesis_score,
                 status=incident.status.value,
+                failure_signature=sig,
                 created_at=incident.created_at,
                 resolved_at=incident.resolved_at,
                 metadata_json=json.dumps(incident.metadata),
@@ -428,3 +456,251 @@ class TraceRepository:
             )
             for er in records
         ]
+
+    # ── Similar Incidents Search (Sections 11 & 31) ───────────
+
+    def find_similar_incidents(
+        self, incident_id: str, limit: int = 5
+    ) -> List[Tuple[Incident, float]]:
+        """Find historical incidents similar to the target incident."""
+        target = self.get_incident(incident_id)
+        if not target:
+            return []
+
+        # Query other incidents with matching category
+        candidates = (
+            self.session.query(IncidentRecord)
+            .filter(
+                IncidentRecord.category == target.category.value,
+                IncidentRecord.incident_id != incident_id,
+            )
+            .order_by(desc(IncidentRecord.created_at))
+            .limit(50)
+            .all()
+        )
+
+        results: List[Tuple[Incident, float]] = []
+        for c_rec in candidates:
+            other_inc = self._record_to_incident(c_rec)
+            sim = compute_incident_similarity(target, other_inc)
+            if sim > 0.0:
+                results.append((other_inc, round(sim, 2)))
+
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:limit]
+
+    # ── Replay Runs CRUD (Sections 21, 25 & 32) ────────────────
+
+    def save_replay(self, replay: ReplayRun) -> None:
+        """Persist a replay execution record."""
+        existing = (
+            self.session.query(ReplayRecord)
+            .filter(ReplayRecord.replay_id == replay.replay_id)
+            .first()
+        )
+
+        cfg_json = json.dumps(replay.config.model_dump())
+        diff_json = json.dumps(replay.metrics_diff.model_dump()) if replay.metrics_diff else "{}"
+        meta_json = json.dumps(replay.metadata)
+
+        if existing:
+            existing.replayed_trace_id = replay.replayed_trace_id
+            existing.replay_type = replay.replay_type.value
+            existing.configuration_json = cfg_json
+            existing.verdict = replay.verdict.value
+            existing.completed_at = replay.completed_at
+            existing.duration_ms = replay.duration_ms
+            existing.metrics_diff_json = diff_json
+            existing.summary = replay.summary
+            existing.metadata_json = meta_json
+        else:
+            record = ReplayRecord(
+                replay_id=replay.replay_id,
+                source_trace_id=replay.source_trace_id,
+                replayed_trace_id=replay.replayed_trace_id,
+                replay_type=replay.replay_type.value,
+                configuration_json=cfg_json,
+                verdict=replay.verdict.value,
+                started_at=replay.started_at,
+                completed_at=replay.completed_at,
+                duration_ms=replay.duration_ms,
+                metrics_diff_json=diff_json,
+                summary=replay.summary,
+                metadata_json=meta_json,
+            )
+            self.session.add(record)
+
+        self.session.commit()
+
+    def get_replay(self, replay_id: str) -> Optional[ReplayRun]:
+        """Load a replay record by ID."""
+        record = (
+            self.session.query(ReplayRecord)
+            .filter(ReplayRecord.replay_id == replay_id)
+            .first()
+        )
+        if not record:
+            return None
+        return self._record_to_replay_run(record)
+
+    def list_replays(
+        self, source_trace_id: Optional[str] = None, limit: int = 50
+    ) -> List[ReplayRun]:
+        """List replays with optional source_trace_id filter."""
+        query = self.session.query(ReplayRecord)
+        if source_trace_id:
+            query = query.filter(ReplayRecord.source_trace_id == source_trace_id)
+        records = query.order_by(desc(ReplayRecord.started_at)).limit(limit).all()
+        return [self._record_to_replay_run(r) for r in records]
+
+    def _record_to_replay_run(self, record: ReplayRecord) -> ReplayRun:
+        """Convert a ReplayRecord into a Pydantic ReplayRun model."""
+        cfg_dict = json.loads(record.configuration_json) if record.configuration_json else {}
+        diff_dict = json.loads(record.metrics_diff_json) if record.metrics_diff_json else None
+        meta_dict = json.loads(record.metadata_json) if record.metadata_json else {}
+
+        metrics_diff = ReplayMetricsDiff(**diff_dict) if diff_dict else None
+
+        return ReplayRun(
+            replay_id=record.replay_id,
+            source_trace_id=record.source_trace_id,
+            replayed_trace_id=record.replayed_trace_id,
+            replay_type=ReplayType(record.replay_type),
+            config=ReplayConfig(**cfg_dict),
+            verdict=ReplayVerdict(record.verdict),
+            started_at=_ensure_utc(record.started_at),
+            completed_at=_ensure_utc(record.completed_at),
+            duration_ms=record.duration_ms,
+            metrics_diff=metrics_diff,
+            summary=record.summary,
+            metadata=meta_dict,
+        )
+
+    # ── Regression Cases CRUD (Sections 12, 13, 25 & Milestone 8) ───
+
+    def save_regression_case(self, case: RegressionCase) -> None:
+        """Persist or update a regression test case."""
+        existing = (
+            self.session.query(RegressionCaseRecord)
+            .filter(RegressionCaseRecord.case_id == case.id)
+            .first()
+        )
+
+        ev_json = json.dumps(case.expected_evidence)
+        asrt_json = json.dumps([a.model_dump() for a in case.assertions])
+        meta_json = json.dumps(case.metadata)
+
+        if existing:
+            existing.status = case.status.value
+            existing.fixed_version = case.fixed_version
+            existing.assertions_json = asrt_json
+            existing.expected_evidence_json = ev_json
+            existing.metadata_json = meta_json
+        else:
+            rec = RegressionCaseRecord(
+                case_id=case.id,
+                incident_id=case.incident_id,
+                source_trace_id=case.source_trace_id,
+                failure_type=case.failure_type,
+                query=case.query,
+                input_hash=case.input_hash,
+                expected_evidence_json=ev_json,
+                assertions_json=asrt_json,
+                owner=case.owner,
+                introduced_version=case.introduced_version,
+                fixed_version=case.fixed_version,
+                status=case.status.value,
+                created_at=case.created_at,
+                metadata_json=meta_json,
+            )
+            self.session.add(rec)
+
+        self.session.commit()
+
+    def get_regression_case(self, case_id: str) -> Optional[RegressionCase]:
+        """Load a regression test case by ID."""
+        record = (
+            self.session.query(RegressionCaseRecord)
+            .filter(RegressionCaseRecord.case_id == case_id)
+            .first()
+        )
+        if not record:
+            return None
+        return self._record_to_regression_case(record)
+
+    def list_regression_cases(
+        self,
+        status: Optional[str] = None,
+        failure_type: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[RegressionCase], int]:
+        """List regression test cases with optional filters."""
+        query = self.session.query(RegressionCaseRecord)
+        if status:
+            query = query.filter(RegressionCaseRecord.status == status)
+        if failure_type:
+            query = query.filter(RegressionCaseRecord.failure_type == failure_type)
+
+        total = query.count()
+        records = (
+            query.order_by(desc(RegressionCaseRecord.created_at))
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return [self._record_to_regression_case(r) for r in records], total
+
+    def save_regression_run(self, result: RegressionRunResult) -> None:
+        """Persist the result of executing a regression test run."""
+        import uuid
+        run_id = f"regrun_{uuid.uuid4().hex[:12]}"
+        asrt_json = json.dumps([a.model_dump() for a in result.assertion_results])
+        rec = RegressionRunRecord(
+            run_id=run_id,
+            case_id=result.case_id,
+            replayed_trace_id=result.replayed_trace_id,
+            passed=result.passed,
+            assertion_results_json=asrt_json,
+            executed_at=result.executed_at,
+            duration_ms=result.duration_ms,
+            summary=result.summary,
+        )
+        self.session.add(rec)
+        self.session.commit()
+
+    def _record_to_regression_case(self, record: RegressionCaseRecord) -> RegressionCase:
+        """Convert a RegressionCaseRecord to a Pydantic RegressionCase."""
+        ev_list = json.loads(record.expected_evidence_json) if record.expected_evidence_json else []
+        asrt_raw = json.loads(record.assertions_json) if record.assertions_json else []
+        meta_dict = json.loads(record.metadata_json) if record.metadata_json else {}
+
+        assertions = [
+            RegressionAssertion(
+                assertion_id=a["assertion_id"],
+                name=a["name"],
+                target_metric=a["target_metric"],
+                operator=AssertionOperator(a.get("operator", "eq")),
+                expected_value=a["expected_value"],
+                description=a.get("description", ""),
+            )
+            for a in asrt_raw
+        ]
+
+        return RegressionCase(
+            id=record.case_id,
+            incident_id=record.incident_id or "",
+            source_trace_id=record.source_trace_id,
+            failure_type=record.failure_type,
+            query=record.query,
+            input_hash=record.input_hash,
+            expected_evidence=ev_list,
+            assertions=assertions,
+            owner=record.owner,
+            introduced_version=record.introduced_version,
+            fixed_version=record.fixed_version,
+            status=RegressionStatus(record.status),
+            created_at=_ensure_utc(record.created_at),
+            metadata=meta_dict,
+        )
+

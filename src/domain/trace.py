@@ -96,6 +96,9 @@ class TraceData(BaseModel):
                 return s
         return None
 
+    def get_span_by_id(self, span_id: str) -> Optional[SpanData]:
+        return self.get_span(span_id)
+
     def get_spans_by_type(self, span_type: SpanType) -> List[SpanData]:
         return [s for s in self.spans if s.span_type == span_type]
 
