@@ -13,7 +13,11 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.trace import Span, StatusCode
 from src.domain.trace import SpanType, TraceData
-from src.telemetry.exporters import InMemoryTraceCollector, JsonFileTraceExporter
+from src.telemetry.exporters import (
+    DatabaseTraceExporter,
+    InMemoryTraceCollector,
+    JsonFileTraceExporter,
+)
 from src.telemetry.redaction import default_redactor
 
 
@@ -25,6 +29,8 @@ class TelemetryManager:
         service_name: str = "tracesleuth-agent",
         export_to_file: bool = True,
         output_dir: str = "./fixtures/traces",
+        export_to_db: bool = False,
+        db_manager: Any = None,
     ) -> None:
         self.service_name = service_name
         self.memory_collector = InMemoryTraceCollector()
@@ -39,6 +45,16 @@ class TelemetryManager:
                 memory_collector=self.memory_collector,
             )
             self.provider.add_span_processor(SimpleSpanProcessor(self.file_exporter))
+
+        if export_to_db:
+            from src.storage.database import get_database
+
+            self.db_manager = db_manager or get_database()
+            self.db_exporter = DatabaseTraceExporter(
+                memory_collector=self.memory_collector,
+                db_manager=self.db_manager,
+            )
+            self.provider.add_span_processor(SimpleSpanProcessor(self.db_exporter))
 
         self.tracer = self.provider.get_tracer(service_name)
 

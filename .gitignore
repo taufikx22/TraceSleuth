@@ -1,7 +1,9 @@
-# Specification & documentation ignores
+# Specification & documentation ignores (Protected specification never committed)
 5_TraceSleuth_Failure_Forensics_AI_Pipelines.md
 *.md
 !README.md
+!AGENTS.md
+!.agents/**/*.md
 
 # Virtual Environments
 .venv/
@@ -30,6 +32,7 @@ htmlcov/
 !.env.example
 
 # Local databases & runtime traces
+data/
 *.db
 *.sqlite
 *.sqlite3

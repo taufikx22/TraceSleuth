@@ -203,3 +203,48 @@ class JsonFileTraceExporter(SpanExporter):
 
     def shutdown(self) -> None:
         pass
+
+
+class DatabaseTraceExporter(SpanExporter):
+    """Exports assembled TraceData to the SQLAlchemy database via IngestionService.
+
+    Requires a memory_collector to assemble complete traces from individual spans,
+    and a DatabaseManager for persistence.
+    """
+
+    def __init__(
+        self,
+        memory_collector: InMemoryTraceCollector,
+        db_manager: Any = None,
+        auto_classify: bool = True,
+    ) -> None:
+        self.collector = memory_collector
+        self.db_manager = db_manager
+        self.auto_classify = auto_classify
+        self._exported_traces: set = set()
+
+    def export(self, spans: List[ReadableSpan]) -> SpanExportResult:
+        if not self.db_manager:
+            return SpanExportResult.SUCCESS
+
+        # Lazy import to avoid circular dependencies
+        from src.ingestion.service import IngestionService
+
+        service = IngestionService(self.db_manager)
+
+        for trace_id in self.collector.get_all_trace_ids():
+            if trace_id not in self._exported_traces:
+                trace = self.collector.get_trace(trace_id)
+                if trace and len(trace.spans) > 0:
+                    try:
+                        service.ingest_trace(trace, auto_classify=self.auto_classify)
+                        self._exported_traces.add(trace_id)
+                    except Exception:
+                        # Don't crash the application if DB export fails
+                        pass
+
+        return SpanExportResult.SUCCESS
+
+    def shutdown(self) -> None:
+        pass
+
