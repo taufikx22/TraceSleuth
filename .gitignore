@@ -3,8 +3,9 @@
 *Failure_Forensics*.md
 *.md
 !README.md
-!AGENTS.md
-!.agents/**/*.md
+AGENTS.md
+.agents/
+
 
 # Python caches, bytecode & build artifacts
 __pycache__/
@@ -48,6 +49,7 @@ htmlcov/
 
 # Local databases, runtime traces & SQLite journals
 data/
+fixtures/
 *.db
 *.db-journal
 *.db-wal
@@ -60,8 +62,6 @@ data/
 *.sqlite3-journal
 *.sqlite3-wal
 *.sqlite3-shm
-fixtures/traces/*.json
-!fixtures/traces/.gitkeep
 
 # Logs & temporary files
 *.log
